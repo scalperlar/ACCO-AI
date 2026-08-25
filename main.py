@@ -32,6 +32,7 @@ from telegram.ext import (
 # ---------------------------------------------------------------------------
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
+CHANNEL_USERNAME = "@AccoAI"
 
 if not TELEGRAM_BOT_TOKEN:
     raise RuntimeError("TELEGRAM_BOT_TOKEN env var (Replit Secret) topilmadi.")
@@ -340,6 +341,73 @@ async def handle_format_choice(
     )
 
 
+def subscription_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(
+                    "Kanalga obuna bo'lish",
+                    url=f"https://t.me/{CHANNEL_USERNAME.lstrip('@')}",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "Obunani tekshirish", callback_data="check_channel_subscription"
+                )
+            ],
+        ]
+    )
+
+
+async def is_channel_subscriber(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> bool:
+    user = update.effective_user
+    if user is None:
+        return False
+    try:
+        member = await context.bot.get_chat_member(
+            chat_id=CHANNEL_USERNAME,
+            user_id=user.id,
+        )
+        return member.status in {"creator", "administrator", "member"} or (
+            member.status == "restricted" and bool(getattr(member, "is_member", False))
+        )
+    except Exception as exc:
+        logger.warning("Kanal obunasini tekshirib bo'lmadi: %s", exc)
+        return False
+
+
+async def require_channel_subscription(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> bool:
+    if await is_channel_subscriber(update, context):
+        return True
+    await update.message.reply_text(
+        "Botdan foydalanish uchun avval @AccoAI kanaliga obuna bo'ling.\n"
+        "Obuna bo'lgach, «Obunani tekshirish» tugmasini bosing.",
+        reply_markup=subscription_keyboard(),
+    )
+    return False
+
+
+async def check_channel_subscription(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    query = update.callback_query
+    if query is None:
+        return
+    if await is_channel_subscriber(update, context):
+        await query.answer("Obuna tasdiqlandi.")
+        await query.edit_message_text(
+            "Obuna tasdiqlandi. Endi hujjat yuborishingiz mumkin."
+        )
+    else:
+        await query.answer(
+            "Avval @AccoAI kanaliga obuna bo'ling.", show_alert=True
+        )
+
+
 SYSTEM_PROMPT = (
     "Sen professional o'zbek buxgalterisan. Berilgan hujjatdagi raqamlar, "
     "sanalar va tafovutlarni juda aniq tahlil qilib, o'zbek tilida xulosa ber."
@@ -489,6 +557,8 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
 
 async def compare_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not await require_channel_subscription(update, context):
+        return
     context.user_data["compare_mode"] = True
     context.user_data.pop("compare_first", None)
     await update.message.reply_text(
@@ -642,6 +712,8 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             "Iltimos, hujjat fayli (PDF, .docx, .xlsx yoki rasm) yuboring."
         )
         return
+    if not await require_channel_subscription(update, context):
+        return
 
     filename = document.file_name or ""
     mime = document.mime_type or ""
@@ -766,6 +838,8 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not await require_channel_subscription(update, context):
+        return
     photos = update.message.photo
     if not photos:
         await update.message.reply_text(
@@ -821,6 +895,11 @@ def main() -> None:
     app.add_handler(CommandHandler("cancel", cancel_command))
     app.add_handler(
         CallbackQueryHandler(handle_format_choice, pattern=r"^audit_format_(text|file)$")
+    )
+    app.add_handler(
+        CallbackQueryHandler(
+            check_channel_subscription, pattern=r"^check_channel_subscription$"
+        )
     )
     app.add_handler(MessageHandler(filters.Document.ALL, handle_document))
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
