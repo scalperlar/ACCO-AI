@@ -526,6 +526,14 @@ so'zi, mos tranzaksiyalar ro'yxati yoki umumiy maslahatlar yozma.
 # Telegram handlerlari
 # ---------------------------------------------------------------------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not await is_channel_subscriber(update, context):
+        await update.message.reply_text(
+            "ACCO AI botidan foydalanish uchun @AccoAI kanaliga majburiy obuna bo'ling.\n"
+            "Obuna bo'lgach, «Obunani tekshirish» tugmasini bosing.",
+            reply_markup=subscription_keyboard(),
+        )
+        return
+
     await update.message.reply_text(
         "Salom! Men ACCO AI — aqlli buxgalter yordamchisiman.\n\n"
         "Menga quyidagilarni yuboring:\n"
