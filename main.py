@@ -533,6 +533,35 @@ LANGUAGE_INSTRUCTIONS = {
     "en": "Give the answer in English.",
 }
 
+LANGUAGE_NAMES = {
+    "uz": "o'zbek",
+    "ru": "рус",
+    "en": "English",
+}
+
+
+BUXGALTERIYA_SYSTEM_PROMPT_TEMPLATE = """
+Sen tajribali buxgalter-maslahatchisan. Faqat buxgalteriya, soliq, moliyaviy
+hisobot, audit va shu kabi professional mavzularga oid savollarga javob ber.
+
+TIL QOIDASI:
+- Har doim {preferred_lang} tilida javob ber — savol qaysi tilda yozilganidan
+  qat'iy nazar.
+
+QOIDALAR:
+- Agar savolda aniq mamlakat yoki standart ko'rsatilmagan bo'lsa, kerak bo'lsa
+  O'zbekiston amaliyoti va xalqaro IFRS amaliyotini qisqacha qiyosla.
+- Agar savolda aniq mamlakat yoki standart ko'rsatilgan bo'lsa (masalan IFRS,
+  AQSh yoki Rossiya), faqat o'shanga tayan.
+- Savol buxgalteriya, soliq yoki moliya bilan bog'liq bo'lmasa, {preferred_lang}
+  tilida muloyimlik bilan bu mavzuda yordam bera olmasligingni ayt.
+- Javoblar qisqa, aniq va amaliy bo'lsin — uzun ma'ruza emas.
+- Aniq stavka yoki raqam so'ralsa, joriy ma'lumotni rasmiy manbadan tekshirish
+  kerakligini eslat, chunki qonunlar tez o'zgaradi.
+- Murakkab savollarda professional buxgalter yoki auditor bilan maslahatlashish
+  tavsiya etilishini qo'sh.
+"""
+
 
 def language_instruction(language: str) -> str:
     return LANGUAGE_INSTRUCTIONS.get(language, LANGUAGE_INSTRUCTIONS["uz"])
@@ -696,6 +725,42 @@ async def cancel_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await update.message.reply_text(tr(context, "cancelled"))
     else:
         await update.message.reply_text(tr(context, "nothing_to_cancel"))
+
+
+async def handle_text_question(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    if not await require_channel_subscription(update, context):
+        return
+
+    language = context.user_data.get("language", "uz")
+    preferred_lang = LANGUAGE_NAMES.get(language, LANGUAGE_NAMES["uz"])
+    thinking_message = {
+        "uz": "🤔 O'ylab ko'ryapman...",
+        "ru": "🤔 Думаю...",
+        "en": "🤔 Thinking...",
+    }
+    await update.message.reply_text(thinking_message.get(language, thinking_message["uz"]))
+
+    question = update.message.text.strip()
+    system_prompt = BUXGALTERIYA_SYSTEM_PROMPT_TEMPLATE.format(
+        preferred_lang=preferred_lang
+    )
+    try:
+        response = generate_with_fallback(
+            f"{system_prompt}\n\nSavol:\n{question}"
+        )
+        answer = (response.text or "").strip()
+        if not answer:
+            await update.message.reply_text(tr(context, "no_ai_response"))
+            return
+        for part in chunk_text(answer):
+            await update.message.reply_text(part)
+    except Exception as exc:
+        logger.exception("Matnli savolga javob berishda xatolik")
+        await update.message.reply_text(
+            format_user_error(exc, language)
+        )
 
 
 async def _run_comparison(
@@ -1021,6 +1086,9 @@ def main() -> None:
     )
     app.add_handler(MessageHandler(filters.Document.ALL, handle_document))
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
+    app.add_handler(
+        MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_question)
+    )
     app.add_handler(
         MessageHandler(
             filters.ALL
